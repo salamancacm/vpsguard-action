@@ -1,0 +1,102 @@
+name: 'vpsguard'
+description: 'Audit your Linux VPS fleet security posture with vpsguard from CI/CD'
+author: 'salamancacm'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  hosts:
+    description: >
+      Comma-separated host addresses to audit (e.g. "web-1.example.com,10.0.0.5").
+      Ignored if 'config' is set.
+    required: false
+  ssh-user:
+    description: 'SSH user for all hosts listed in "hosts" (ignored if "config" is set)'
+    required: false
+    default: 'root'
+  ssh-port:
+    description: 'SSH port for all hosts listed in "hosts" (ignored if "config" is set)'
+    required: false
+    default: '22'
+  ssh-key:
+    description: 'SSH private key (e.g. from a secret) used to connect to the hosts. Required.'
+    required: true
+  ssh-known-hosts:
+    description: >
+      Contents for ~/.ssh/known_hosts (e.g. from `ssh-keyscan`). Strongly
+      recommended — without it, host keys are trusted on first connection
+      (StrictHostKeyChecking=accept-new), which is fine for a throwaway
+      demo but not for anything that matters.
+    required: false
+  config:
+    description: >
+      Path (relative to the workflow's checkout) to a full vpsguard
+      config.yaml already in your repo, instead of building one from
+      hosts/ssh-user/ssh-port. Use this if you need disabled_checks,
+      thresholds, or per-host custom ports.
+    required: false
+  vpsguard-version:
+    description: 'vpsguard version to install, e.g. "v0.4.1" (default: latest release)'
+    required: false
+    default: 'latest'
+  fail-on:
+    description: 'Fail the job if a finding at or above this severity exists: CRIT, WARN, or NONE'
+    required: false
+    default: 'CRIT'
+
+outputs:
+  crit-count:
+    description: 'Total CRIT findings across all hosts'
+    value: ${{ steps.run.outputs.crit-count }}
+  warn-count:
+    description: 'Total WARN findings across all hosts'
+    value: ${{ steps.run.outputs.warn-count }}
+  unreachable-count:
+    description: 'Number of hosts that could not be reached'
+    value: ${{ steps.run.outputs.unreachable-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install vpsguard
+      shell: bash
+      run: ${{ github.action_path }}/install.sh
+      env:
+        VPSGUARD_VERSION: ${{ inputs.vpsguard-version }}
+
+    - name: Configure SSH
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        printf '%s\n' "${{ inputs.ssh-key }}" > ~/.ssh/vpsguard_action_key
+        chmod 600 ~/.ssh/vpsguard_action_key
+        if [ -n "${{ inputs.ssh-known-hosts }}" ]; then
+          printf '%s\n' "${{ inputs.ssh-known-hosts }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+        fi
+        {
+          echo "Host *"
+          echo "  IdentityFile ~/.ssh/vpsguard_action_key"
+          echo "  IdentitiesOnly yes"
+        } >> ~/.ssh/config
+        chmod 600 ~/.ssh/config
+
+    - name: Build config
+      if: inputs.config == ''
+      shell: bash
+      run: ${{ github.action_path }}/build-config.sh
+      env:
+        HOSTS: ${{ inputs.hosts }}
+        SSH_USER: ${{ inputs.ssh-user }}
+        SSH_PORT: ${{ inputs.ssh-port }}
+
+    - name: Run vpsguard fleet
+      id: run
+      shell: bash
+      run: ${{ github.action_path }}/run-fleet.sh
+      env:
+        CONFIG_PATH: ${{ inputs.config }}
+        FAIL_ON: ${{ inputs.fail-on }}
