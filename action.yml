@@ -1,4 +1,4 @@
-name: 'vpsguard'
+name: 'VPS Fleet Audit (vpsguard)'
 description: 'Audit your Linux VPS fleet security posture with vpsguard from CI/CD'
 author: 'salamancacm'
 branding:
